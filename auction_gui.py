@@ -180,7 +180,7 @@ class ControlRoom:
         cfg_bar.pack(fill=tk.X)
 
         self._make_label(cfg_bar, "URL", fg=TEXT_DIM, font=("Consolas", 9)).pack(side=tk.LEFT)
-        self.url_var = tk.StringVar(value=self.config["auction_url"])
+        self.url_var = tk.StringVar(value=self.config.get("auction_url", ""))
         self._make_entry(cfg_bar, self.url_var, width=55).pack(side=tk.LEFT, padx=(4, 12))
 
         self._make_label(cfg_bar, "MAX £", fg=TEXT_DIM, font=("Consolas", 9)).pack(side=tk.LEFT)
@@ -239,8 +239,8 @@ class ControlRoom:
                                                   fg=ACCENT_BLUE)
         self.lot_number_label.pack(side=tk.RIGHT)
 
-        lot_body = tk.Frame(lot_card, bg=BG_PANEL, padx=12, pady=(0, 8))
-        lot_body.pack(fill=tk.X)
+        lot_body = tk.Frame(lot_card, bg=BG_PANEL, padx=12, pady=4)
+        lot_body.pack(fill=tk.X, pady=(0, 4))
         self.lot_desc_label = self._make_label(lot_body, "--", font=("Consolas", 10),
                                                 fg=TEXT, wraplength=350)
         self.lot_desc_label.pack(anchor="w")
