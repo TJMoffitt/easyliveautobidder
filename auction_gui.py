@@ -481,21 +481,22 @@ class ControlRoom:
             self.latency_label.config(text=f"WHISPER: {ms}ms", fg=color)
         self.root.after(0, do)
 
-    def _flash_alert(self, signal_type):
-        """Flash the entire price area red/amber and beep when a closing signal fires."""
-        urgent = any(k in signal_type.lower() for k in ("twice", "final", "all_done", "last", "no_more", "sell"))
-        flash_color = ACCENT_RED if urgent else ACCENT_AMBER
-        flash_count = 8 if urgent else 6
+    def _flash_alert(self, urgency):
+        """Flash the price area and beep. urgency = 'HIGH', 'MEDIUM', or 'LOW'."""
+        is_high = urgency == "HIGH"
+        flash_color = ACCENT_RED if is_high else ACCENT_AMBER
+        flash_count = 10 if is_high else 6
 
         def beep():
             try:
                 import winsound
-                freq = 2200 if urgent else 1800
-                winsound.Beep(freq, 200 if urgent else 150)
-                if urgent:
+                if is_high:
+                    winsound.Beep(2200, 200)
                     import time as _t
                     _t.sleep(0.05)
                     winsound.Beep(2200, 200)
+                else:
+                    winsound.Beep(1800, 150)
             except Exception:
                 print("\a", end="", flush=True)
 
@@ -746,16 +747,42 @@ class ControlRoom:
         except Exception:
             pass
 
+    def _analyze_transcript(self, text):
+        """Use GPT-4o to classify auctioneer speech as closing/sold/normal."""
+        try:
+            resp = self.openai_client.chat.completions.create(
+                model=self.config.get("openai_model", "gpt-4o"),
+                max_tokens=60,
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": (
+                        "You analyse live auction transcripts. Classify the auctioneer's intent. "
+                        "Reply with EXACTLY one JSON object, no other text.\n"
+                        "Fields:\n"
+                        '  "status": one of "CLOSING", "SOLD", "NORMAL"\n'
+                        '  "urgency": one of "HIGH", "MEDIUM", "LOW"\n'
+                        '  "reason": very short phrase (max 5 words)\n\n'
+                        "CLOSING = auctioneer is warning the lot is about to sell "
+                        "(going once, going twice, last call, fair warning, any more bids, "
+                        "lowest I'll go, about to sell, shall I sell, final chance, "
+                        "all done, selling now, any takers, last time, etc.)\n"
+                        "SOLD = the lot has been sold (sold, hammer down, knocked down, "
+                        "congratulations, sold to, etc.)\n"
+                        "NORMAL = anything else (describing items, taking bids, price drops, chatter)"
+                    )},
+                    {"role": "user", "content": text}
+                ]
+            )
+            raw = resp.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+            return json.loads(raw)
+        except Exception as e:
+            self._log_decision(f"AI classify error: {e}", "error")
+            return {"status": "NORMAL", "urgency": "LOW", "reason": "error"}
+
     async def _audio_loop(self):
-        closing_signals = {
-            "going twice": "GOING_TWICE", "going once": "GOING_ONCE",
-            "final call": "FINAL_CALL", "fair warning": "FAIR_WARNING",
-            "last chance": "LAST_CHANCE", "last call": "LAST_CALL",
-            "about to sell": "ABOUT_TO_SELL", "selling now": "SELLING_NOW",
-            "all done": "ALL_DONE", "any more": "ANY_MORE", "anymore": "ANY_MORE",
-            "no more bids": "NO_MORE_BIDS", "shall i sell": "SHALL_I_SELL",
-        }
-        sold_phrases = ["sold", "hammer", "knocked down"]
+        self._transcript_buffer = []
 
         while self.running:
             await asyncio.sleep(3)
@@ -802,22 +829,32 @@ class ControlRoom:
                     continue
 
                 self._log_transcript(text)
-                lower = text.lower()
 
-                for phrase, sig in closing_signals.items():
-                    if phrase in lower:
-                        self.state.closing_signal_active = True
-                        self.state.closing_signal_type = sig
-                        self.state.closing_signal_time = asyncio.get_event_loop().time()
-                        self._log_decision(f">>> CLOSING: {sig} <<<", "trigger")
-                        self._set_status(f"CLOSING: {sig}", ACCENT_AMBER)
-                        self._flash_alert(sig)
-                        break
+                self._transcript_buffer.append(text)
+                if len(self._transcript_buffer) > 5:
+                    self._transcript_buffer = self._transcript_buffer[-5:]
 
-                for phrase in sold_phrases:
-                    if phrase in lower:
-                        self._record_sale()
-                        break
+                context = " | ".join(self._transcript_buffer[-3:])
+                analysis = await asyncio.get_event_loop().run_in_executor(
+                    None, self._analyze_transcript, context
+                )
+
+                status = analysis.get("status", "NORMAL")
+                urgency = analysis.get("urgency", "LOW")
+                reason = analysis.get("reason", "")
+
+                if status == "CLOSING":
+                    self.state.closing_signal_active = True
+                    self.state.closing_signal_type = reason.upper()
+                    self.state.closing_signal_time = asyncio.get_event_loop().time()
+                    color = ACCENT_RED if urgency == "HIGH" else ACCENT_AMBER
+                    self._log_decision(f">>> CLOSING: {reason} [{urgency}] <<<", "trigger")
+                    self._set_status(f"CLOSING: {reason}", color)
+                    self._flash_alert(urgency)
+
+                elif status == "SOLD":
+                    self._log_decision(f"SOLD DETECTED: {reason}", "sold")
+                    self._record_sale()
 
             except Exception as e:
                 self._log_decision(f"Audio error: {e}", "error")
