@@ -483,13 +483,19 @@ class ControlRoom:
 
     def _flash_alert(self, signal_type):
         """Flash the entire price area red/amber and beep when a closing signal fires."""
-        flash_color = ACCENT_RED if "twice" in signal_type.lower() or "final" in signal_type.lower() else ACCENT_AMBER
-        flash_count = 6
+        urgent = any(k in signal_type.lower() for k in ("twice", "final", "all_done", "last", "no_more", "sell"))
+        flash_color = ACCENT_RED if urgent else ACCENT_AMBER
+        flash_count = 8 if urgent else 6
 
         def beep():
             try:
                 import winsound
-                winsound.Beep(1800, 150)
+                freq = 2200 if urgent else 1800
+                winsound.Beep(freq, 200 if urgent else 150)
+                if urgent:
+                    import time as _t
+                    _t.sleep(0.05)
+                    winsound.Beep(2200, 200)
             except Exception:
                 print("\a", end="", flush=True)
 
@@ -744,8 +750,10 @@ class ControlRoom:
         closing_signals = {
             "going twice": "GOING_TWICE", "going once": "GOING_ONCE",
             "final call": "FINAL_CALL", "fair warning": "FAIR_WARNING",
-            "last chance": "LAST_CHANCE", "about to sell": "ABOUT_TO_SELL",
-            "selling now": "SELLING_NOW", "any more": "ANY_MORE", "anymore": "ANY_MORE",
+            "last chance": "LAST_CHANCE", "last call": "LAST_CALL",
+            "about to sell": "ABOUT_TO_SELL", "selling now": "SELLING_NOW",
+            "all done": "ALL_DONE", "any more": "ANY_MORE", "anymore": "ANY_MORE",
+            "no more bids": "NO_MORE_BIDS", "shall i sell": "SHALL_I_SELL",
         }
         sold_phrases = ["sold", "hammer", "knocked down"]
 
