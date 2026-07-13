@@ -23,6 +23,9 @@ from playwright.async_api import async_playwright, Page
 
 load_dotenv()
 
+# If .env doesn't load on Windows, the key can be set directly here:
+# os.environ["OPENAI_API_KEY"] = "your-key-here"
+
 # ── Colour palette ──────────────────────────────────────────────────────
 BG_DARK = "#0a0e17"
 BG_PANEL = "#111827"
@@ -478,6 +481,30 @@ class ControlRoom:
             self.latency_label.config(text=f"WHISPER: {ms}ms", fg=color)
         self.root.after(0, do)
 
+    def _flash_alert(self, signal_type):
+        """Flash the entire price area red/amber and beep when a closing signal fires."""
+        flash_color = ACCENT_RED if "twice" in signal_type.lower() or "final" in signal_type.lower() else ACCENT_AMBER
+        flash_count = 6
+
+        def beep():
+            try:
+                import winsound
+                winsound.Beep(1800, 150)
+            except Exception:
+                print("\a", end="", flush=True)
+
+        threading.Thread(target=beep, daemon=True).start()
+
+        def do_flash(n):
+            if n <= 0:
+                self.price_label.config(bg=BG_CARD)
+                return
+            bg = flash_color if n % 2 == 0 else BG_CARD
+            self.price_label.config(bg=bg)
+            self.root.after(120, lambda: do_flash(n - 1))
+
+        self.root.after(0, lambda: do_flash(flash_count))
+
     def _update_stats(self):
         def do():
             self.won_label.config(text=str(self.state.items_won))
@@ -774,8 +801,9 @@ class ControlRoom:
                         self.state.closing_signal_active = True
                         self.state.closing_signal_type = sig
                         self.state.closing_signal_time = asyncio.get_event_loop().time()
-                        self._log_decision(f"TRIGGER: {sig}", "trigger")
-                        self._set_status(f"TRIGGER: {sig}", ACCENT_AMBER)
+                        self._log_decision(f">>> CLOSING: {sig} <<<", "trigger")
+                        self._set_status(f"CLOSING: {sig}", ACCENT_AMBER)
+                        self._flash_alert(sig)
                         break
 
                 for phrase in sold_phrases:
