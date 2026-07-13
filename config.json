@@ -1,0 +1,21 @@
+{
+    "auction_url": "https://www.easyliveauction.com/catalogue/cf29ea3fbdee98fa08c922f6734707a0/0af8d24542e81eb9357e7ef448a6646f/saturday-homes-antiques/bid-live/",
+    "max_bid_gbp": 500,
+    "target_lots": [],
+    "live_mode": false,
+    "bid_strategy": {
+        "wait_for_drop": true,
+        "snipe_on_going_once": true,
+        "snipe_on_going_twice": true,
+        "bid_increment": 10,
+        "reaction_delay_ms": 500
+    },
+    "speech_to_text": {
+        "model": "whisper-1",
+        "language": "en",
+        "chunk_duration_seconds": 3
+    },
+    "openai_model": "gpt-4o",
+    "headless": false,
+    "audio_sample_rate": 16000
+}
