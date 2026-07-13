@@ -98,6 +98,7 @@ class ControlRoom:
         self.openai_client = None
         self.prev_bid = 0
         self.price_flash_job = None
+        self.target_lots = {}
 
         self._build_ui()
 
@@ -194,9 +195,7 @@ class ControlRoom:
         self.budget_var = tk.StringVar(value=str(self.config["bid_strategy"].get("budget_limit", 0)))
         self._make_entry(cfg_bar, self.budget_var, width=6).pack(side=tk.LEFT, padx=(4, 12))
 
-        self._make_label(cfg_bar, "LOTS", fg=TEXT_DIM, font=("Consolas", 9)).pack(side=tk.LEFT)
-        self.targets_var = tk.StringVar(value=",".join(self.config.get("target_lots", [])))
-        self._make_entry(cfg_bar, self.targets_var, width=18).pack(side=tk.LEFT, padx=(4, 0))
+        self.targets_var = tk.StringVar(value="")
 
         # ── Main 3-column layout ────────────────────────────────────────
         main = tk.Frame(self.root, bg=BG_DARK)
@@ -347,13 +346,12 @@ class ControlRoom:
     def _build_right_panel(self, parent):
         right = tk.Frame(parent, bg=BG_DARK)
         right.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
-        right.rowconfigure(1, weight=1)
+        right.rowconfigure(2, weight=1)
 
         # Stats cards
         stats_frame = tk.Frame(right, bg=BG_DARK)
         stats_frame.pack(fill=tk.X, pady=(0, 4))
 
-        # Won / Spent
         won_card = tk.Frame(stats_frame, bg=BG_PANEL, highlightbackground=BORDER, highlightthickness=1)
         won_card.pack(fill=tk.X, pady=(0, 4))
         won_inner = tk.Frame(won_card, bg=BG_PANEL, padx=12, pady=8)
@@ -374,7 +372,6 @@ class ControlRoom:
         self.spent_label = self._make_label(w_right, "£0", font=("Consolas", 20, "bold"), fg=TEXT)
         self.spent_label.pack(anchor="w")
 
-        # Budget bar
         budget_frame = tk.Frame(won_inner, bg=BG_PANEL)
         budget_frame.pack(fill=tk.X, pady=(6, 0))
         self._make_label(budget_frame, "BUDGET", font=("Consolas", 8), fg=TEXT_DIM).pack(anchor="w")
@@ -384,6 +381,54 @@ class ControlRoom:
         self.budget_pct_label = self._make_label(budget_frame, "0%", font=("Consolas", 8), fg=TEXT_DIM)
         self.budget_pct_label.pack(anchor="e")
 
+        # ── TARGET LOTS ─────────────────────────────────────────────────
+        target_card = tk.Frame(right, bg=BG_PANEL, highlightbackground=BORDER, highlightthickness=1)
+        target_card.pack(fill=tk.X, pady=(0, 4))
+
+        target_header = tk.Frame(target_card, bg=BG_PANEL, padx=12, pady=6)
+        target_header.pack(fill=tk.X)
+        self._make_label(target_header, "TARGET LOTS", font=("Consolas", 9, "bold"),
+                         fg=TEXT_DIM).pack(side=tk.LEFT)
+        self.target_count_label = self._make_label(target_header, "0 lots",
+                                                    font=("Consolas", 9), fg=TEXT_DIM)
+        self.target_count_label.pack(side=tk.RIGHT)
+
+        # Add row
+        add_row = tk.Frame(target_card, bg=BG_PANEL, padx=12, pady=4)
+        add_row.pack(fill=tk.X)
+
+        self._make_label(add_row, "Lot", font=("Consolas", 9), fg=TEXT_DIM).pack(side=tk.LEFT)
+        self.target_lot_var = tk.StringVar()
+        self._make_entry(add_row, self.target_lot_var, width=8).pack(side=tk.LEFT, padx=(4, 8))
+
+        self._make_label(add_row, "Max £", font=("Consolas", 9), fg=TEXT_DIM).pack(side=tk.LEFT)
+        self.target_max_var = tk.StringVar()
+        self._make_entry(add_row, self.target_max_var, width=7).pack(side=tk.LEFT, padx=(4, 8))
+
+        add_btn = tk.Button(add_row, text="ADD", font=("Consolas", 9, "bold"),
+                            bg=ACCENT_BLUE, fg=BG_DARK, relief="flat", cursor="hand2",
+                            command=self._add_target_lot, padx=8)
+        add_btn.pack(side=tk.LEFT)
+
+        rm_btn = tk.Button(add_row, text="DEL", font=("Consolas", 9, "bold"),
+                           bg=ACCENT_RED, fg=BG_DARK, relief="flat", cursor="hand2",
+                           command=self._remove_target_lot, padx=8)
+        rm_btn.pack(side=tk.LEFT, padx=(4, 0))
+
+        # Target lots listbox
+        tgt_list_frame = tk.Frame(target_card, bg=BG_CARD, padx=4, pady=4)
+        tgt_list_frame.pack(fill=tk.X, padx=12, pady=(0, 8))
+
+        self.target_listbox = tk.Listbox(tgt_list_frame, bg=BG_CARD, fg=TEXT,
+                                          font=("Consolas", 9), height=6,
+                                          relief="flat", highlightthickness=0,
+                                          selectbackground=BG_INPUT, activestyle="none",
+                                          borderwidth=0)
+        tgt_scroll = tk.Scrollbar(tgt_list_frame, command=self.target_listbox.yview)
+        self.target_listbox.configure(yscrollcommand=tgt_scroll.set)
+        tgt_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.target_listbox.pack(fill=tk.X, expand=True)
+
         # History list
         hist_header = tk.Frame(right, bg=BG_DARK)
         hist_header.pack(fill=tk.X, pady=(0, 2))
@@ -392,7 +437,6 @@ class ControlRoom:
         self.hist_count_label = self._make_label(hist_header, "0 items", font=("Consolas", 9), fg=TEXT_DIM)
         self.hist_count_label.pack(side=tk.RIGHT)
 
-        # History listbox
         hist_frame = tk.Frame(right, bg=BG_CARD)
         hist_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -403,6 +447,44 @@ class ControlRoom:
         self.history_listbox.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.history_listbox.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+    def _add_target_lot(self):
+        lot = self.target_lot_var.get().strip()
+        max_str = self.target_max_var.get().strip()
+        if not lot:
+            return
+        try:
+            max_bid = int(max_str) if max_str else int(self.max_bid_var.get() or 500)
+        except ValueError:
+            return
+        self.target_lots[lot] = max_bid
+        self.target_lot_var.set("")
+        self.target_max_var.set("")
+        self._refresh_target_list()
+
+    def _remove_target_lot(self):
+        sel = self.target_listbox.curselection()
+        if not sel:
+            return
+        text = self.target_listbox.get(sel[0])
+        lot_num = text.split()[0].lstrip("#")
+        self.target_lots.pop(lot_num, None)
+        self._refresh_target_list()
+
+    def _refresh_target_list(self):
+        self.target_listbox.delete(0, tk.END)
+        for lot, maxb in sorted(self.target_lots.items(), key=lambda x: x[0]):
+            status = ""
+            current_lot = self.state.lot.lot_number or ""
+            if lot in current_lot:
+                status = "  << ACTIVE"
+            for item in self.state.auction_history:
+                if lot in item.lot_number:
+                    status = "  [SOLD]" if not item.won_by_us else "  [WON]"
+            self.target_listbox.insert(tk.END, f"  #{lot:<8} Max £{maxb:>6,}{status}")
+        self.target_count_label.config(text=f"{len(self.target_lots)} lot{'s' if len(self.target_lots) != 1 else ''}")
+        csv = ",".join(self.target_lots.keys())
+        self.targets_var.set(csv)
 
     # ── UI Update Helpers ───────────────────────────────────────────────
 
@@ -569,9 +651,9 @@ class ControlRoom:
                 self.chart_canvas.create_rectangle(x, y, x + bar_w, h - 2, fill=color, outline="")
         self.root.after(0, do)
 
-    def _update_strategy_display(self):
+    def _update_strategy_display(self, override_max=None):
         history = self.state.auction_history
-        max_bid = int(self.max_bid_var.get() or 500)
+        max_bid = override_max if override_max is not None else int(self.max_bid_var.get() or 500)
         budget = int(self.budget_var.get() or 0)
 
         effective_max = max_bid
@@ -875,6 +957,7 @@ class ControlRoom:
             self._update_stats()
             self._update_chart()
             self._update_strategy_display()
+            self._refresh_target_list()
 
         self.state.closing_signal_active = False
         self.state.bids_placed_this_lot = 0
@@ -935,6 +1018,7 @@ class ControlRoom:
                     prev_lot = lot_no
                     self.state.closing_signal_active = False
                     self.state.bids_placed_this_lot = 0
+                    self.root.after(0, self._refresh_target_list)
 
                 if bid_amount != prev_bid and bid_amount > 0:
                     direction = None
@@ -981,9 +1065,8 @@ class ControlRoom:
 
     def _evaluate_bid(self) -> dict:
         lot = self.state.lot
-        max_bid = int(self.max_bid_var.get() or 500)
+        default_max = int(self.max_bid_var.get() or 500)
         budget = int(self.budget_var.get() or 0)
-        targets = [t.strip() for t in self.targets_var.get().split(",") if t.strip()]
 
         if lot.register_required:
             return {"action": "PASS", "reason": "Not registered"}
@@ -991,12 +1074,21 @@ class ControlRoom:
             return {"action": "PASS", "reason": "Bidding ended"}
         if lot.we_are_winning:
             return {"action": "PASS", "reason": "Already winning"}
-        if targets and not any(t in lot.lot_number for t in targets):
-            return {"action": "PASS", "reason": f"Lot {lot.lot_number} not targeted"}
+
+        lot_max = None
+        if self.target_lots:
+            for tgt, tgt_max in self.target_lots.items():
+                if tgt in (lot.lot_number or ""):
+                    lot_max = tgt_max
+                    break
+            if lot_max is None:
+                return {"action": "PASS", "reason": f"Lot {lot.lot_number} not targeted"}
+        max_bid = lot_max if lot_max is not None else default_max
+
         if budget > 0 and self.state.total_spent >= budget:
             return {"action": "PASS", "reason": "Budget exhausted"}
 
-        effective_max = self._update_strategy_display()
+        effective_max = self._update_strategy_display(override_max=max_bid)
 
         if lot.current_bid >= effective_max:
             return {"action": "PASS", "reason": f"£{lot.current_bid:,} >= max £{effective_max:,}"}
