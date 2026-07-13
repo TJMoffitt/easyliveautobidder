@@ -916,6 +916,13 @@ class ControlRoom:
                 if len(self._transcript_buffer) > 5:
                     self._transcript_buffer = self._transcript_buffer[-5:]
 
+                current_lot = self.state.lot.lot_number or ""
+                on_target = not self.target_lots or any(
+                    t in current_lot for t in self.target_lots)
+
+                if not on_target:
+                    continue
+
                 context = " | ".join(self._transcript_buffer[-3:])
                 analysis = await asyncio.get_event_loop().run_in_executor(
                     None, self._analyze_transcript, context
@@ -1119,10 +1126,13 @@ class ControlRoom:
         signal = self.state.closing_signal_type
 
         if not self.live_var.get():
+            lot_max = self.target_lots.get(lot.lot_number, int(self.max_bid_var.get() or 500))
             self._log_decision(
-                f"WOULD BID £{decision['amount']:,}  |  trigger={signal}  lot={lot.lot_number}  "
-                f"current=£{lot.current_bid:,}  max=£{int(self.max_bid_var.get() or 500):,}", "bid")
+                f">>> WOULD CLICK BID £{decision['amount']:,} <<<  "
+                f"trigger={signal}  lot=#{lot.lot_number}  "
+                f"current=£{lot.current_bid:,}  max=£{lot_max:,}", "bid")
             self._set_status(f"WOULD BID £{decision['amount']:,}", ACCENT_AMBER)
+            self._flash_alert("MEDIUM")
         else:
             delay = self.config["bid_strategy"].get("reaction_delay_ms", 500) / 1000
             await asyncio.sleep(delay)
