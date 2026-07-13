@@ -73,6 +73,7 @@ class BotState:
     closing_signal_active: bool = False
     closing_signal_type: str = ""
     closing_signal_time: float = 0
+    competitor_bid_active: bool = False
     last_bid_placed_at: float = 0
     bids_placed_this_lot: int = 0
     total_bids_placed: int = 0
@@ -1032,6 +1033,12 @@ class ControlRoom:
                     if prev_bid > 0 and bid_amount > prev_bid:
                         direction = "up"
                         self._log_decision(f"BID UP: £{prev_bid:,} → £{bid_amount:,}")
+                        on_target = not self.target_lots or any(
+                            t in (lot_no or "") for t in self.target_lots)
+                        if on_target and not lot.we_are_winning:
+                            self.state.competitor_bid_active = True
+                            self._log_decision(
+                                f"COMPETITOR BID on #{lot_no} — responding", "trigger")
                     elif prev_bid > 0 and bid_amount < prev_bid:
                         direction = "down"
                     self._update_price(bid_amount, direction)
@@ -1050,16 +1057,22 @@ class ControlRoom:
         while self.running:
             await asyncio.sleep(0.2)
 
-            if not self.state.closing_signal_active:
+            trigger = None
+            if self.state.competitor_bid_active:
+                trigger = "COMPETITOR_BID"
+                self.state.competitor_bid_active = False
+            elif self.state.closing_signal_active:
+                now = asyncio.get_event_loop().time()
+                if now - self.state.closing_signal_time > 15:
+                    self.state.closing_signal_active = False
+                    self._set_status("RUNNING", ACCENT_GREEN)
+                    continue
+                trigger = self.state.closing_signal_type or "CLOSING"
+
+            if not trigger:
                 continue
 
-            now = asyncio.get_event_loop().time()
-            if now - self.state.closing_signal_time > 15:
-                self.state.closing_signal_active = False
-                self._set_status("RUNNING", ACCENT_GREEN)
-                continue
-
-            decision = self._evaluate_bid()
+            decision = self._evaluate_bid(trigger)
 
             if decision["action"] == "BID":
                 await self._place_bid(decision)
@@ -1070,7 +1083,7 @@ class ControlRoom:
                 self.state.closing_signal_active = False
                 self._set_status("RUNNING", ACCENT_GREEN)
 
-    def _evaluate_bid(self) -> dict:
+    def _evaluate_bid(self, trigger="") -> dict:
         lot = self.state.lot
         default_max = int(self.max_bid_var.get() or 500)
         budget = int(self.budget_var.get() or 0)
@@ -1108,29 +1121,29 @@ class ControlRoom:
         if not lot.bid_button_visible:
             return {"action": "WAIT", "reason": "Button not visible"}
 
-        signal = self.state.closing_signal_type
-        strategy = self.config["bid_strategy"]
-        if signal == "GOING_ONCE" and not strategy.get("snipe_on_going_once", True):
-            return {"action": "PASS", "reason": "Strategy: skip going once"}
-        if signal == "GOING_TWICE" and not strategy.get("snipe_on_going_twice", True):
-            return {"action": "PASS", "reason": "Strategy: skip going twice"}
-
         now = asyncio.get_event_loop().time()
-        if now - self.state.last_bid_placed_at < 5:
+        if now - self.state.last_bid_placed_at < 3:
             return {"action": "WAIT", "reason": "Cooldown"}
 
-        return {"action": "BID", "amount": next_bid, "reason": f"{signal} @ £{lot.current_bid:,}"}
+        return {"action": "BID", "amount": next_bid, "reason": f"{trigger} @ £{lot.current_bid:,}"}
 
     async def _place_bid(self, decision: dict):
         lot = self.state.lot
-        signal = self.state.closing_signal_type
+        reason = decision.get("reason", "")
+
+        lot_max = None
+        if self.target_lots:
+            for tgt, tgt_max in self.target_lots.items():
+                if tgt in (lot.lot_number or ""):
+                    lot_max = tgt_max
+                    break
+        display_max = lot_max if lot_max is not None else int(self.max_bid_var.get() or 500)
 
         if not self.live_var.get():
-            lot_max = self.target_lots.get(lot.lot_number, int(self.max_bid_var.get() or 500))
             self._log_decision(
                 f">>> WOULD CLICK BID £{decision['amount']:,} <<<  "
-                f"trigger={signal}  lot=#{lot.lot_number}  "
-                f"current=£{lot.current_bid:,}  max=£{lot_max:,}", "bid")
+                f"reason={reason}  lot=#{lot.lot_number}  "
+                f"current=£{lot.current_bid:,}  max=£{display_max:,}", "bid")
             self._set_status(f"WOULD BID £{decision['amount']:,}", ACCENT_AMBER)
             self._flash_alert("MEDIUM")
         else:
