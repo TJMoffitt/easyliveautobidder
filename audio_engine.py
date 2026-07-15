@@ -118,7 +118,7 @@ class AudioEngine:
         try:
             from faster_whisper import WhisperModel
             stt = self.config.get("speech_to_text", {})
-            model_name = stt.get("local_model", "small.en")
+            model_name = stt.get("local_model", "base.en")
             self.ui.log_decision(
                 f"Loading local Whisper '{model_name}' (first run "
                 f"downloads the model — may take a minute)...")
@@ -144,7 +144,14 @@ class AudioEngine:
             import io
             segments, _info = self._local_model.transcribe(
                 io.BytesIO(wav_bytes), language="en",
-                beam_size=1, initial_prompt=prompt)
+                beam_size=1,
+                # VAD skips silence (major speedup + kills the
+                # "I found that I found that" hallucination loops)
+                vad_filter=True,
+                # don't feed previous output back in — prevents
+                # repetition spirals on noisy auctioneer audio
+                condition_on_previous_text=False,
+                initial_prompt=prompt)
             return " ".join(s.text.strip() for s in segments).strip()
         resp = self.client.audio.transcriptions.create(
             model="whisper-1",
@@ -223,6 +230,17 @@ class AudioEngine:
                     pcm.extend(c)
                 if len(pcm) < 500:
                     continue
+
+                # Backpressure: if transcription ran slow, audio piled up
+                # in the browser. Keep only the freshest few seconds —
+                # transcribing a growing backlog just falls further behind.
+                max_samples = 16000 * 4
+                if len(pcm) > max_samples:
+                    dropped = (len(pcm) - max_samples) / 16000
+                    pcm = pcm[-max_samples:]
+                    self.ui.log_decision(
+                        f"[DEBUG] audio backlog — dropped {dropped:.1f}s "
+                        f"of stale audio, transcribing freshest 4s", "debug")
 
                 wav = build_wav(pcm)
 
