@@ -178,6 +178,11 @@ class AudioEngine:
 
                 wav = build_wav(pcm)
 
+                # Audio has 3-6s of lag (chunking + transcription). If the
+                # lot changes while this chunk is in flight, the words
+                # belong to the PREVIOUS lot — discard the classification.
+                lot_at_capture = self.state.lot.lot_number
+
                 t0 = time.time()
                 # Run in executor — a blocking call here would freeze the
                 # DOM and decision loops for the whole API round-trip.
@@ -222,6 +227,14 @@ class AudioEngine:
                     f"(bids={'Y' if self.state.any_bids_this_lot else 'N'} "
                     f"phase={self.state.lot_phase})",
                     "debug")
+
+                if self.state.lot.lot_number != lot_at_capture:
+                    if status != "NORMAL":
+                        self.ui.log_decision(
+                            f"[DEBUG] discarding {status} — audio was from "
+                            f"lot #{lot_at_capture}, now on "
+                            f"#{self.state.lot.lot_number}", "debug")
+                    continue
 
                 if status == "PASS_IMMINENT":
                     self.state.closing_signal_active = True

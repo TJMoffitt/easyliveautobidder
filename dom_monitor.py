@@ -28,6 +28,7 @@ DOM_SCRAPE_JS = """
         lotDesc: txt('#bid-live-lot-desc, .bid-live-lot-desc'),
         lotEst: txt('#bid-live-lot-est, .bid-live-lot-est'),
         currentBid: txt('.bid-live-current-bid .current-bid, #bid-live-current-bid'),
+        bidLabel: txt('.bid-live-current-bid .h4'),
         auctioneerMsg: (() => {
             // duplicate ids possible (mobile/desktop layouts) and innerText
             // returns '' for hidden elements — check all, fall back to textContent
@@ -81,6 +82,7 @@ class DomMonitor:
                 lot.description = data.get("lotDesc", "")
                 lot.estimate = data.get("lotEst", "")
                 lot.current_bid = bid_amount
+                lot.bid_label = data.get("bidLabel", "")
                 lot.auctioneer_message = data.get("auctioneerMsg", "")
                 lot.bid_button_visible = data.get("bidButtonVisible", False)
                 lot.bidding_ended = data.get("biddingEnded", False)
@@ -96,6 +98,10 @@ class DomMonitor:
                         f"LOT   #{self.prev_lot or '--'} → #{lot_no}  "
                         f"({lot.description[:60]})")
                     self.prev_lot = lot_no
+                    # prev_bid=0: the first price of the new lot is a
+                    # baseline, NOT a movement vs the old lot's price
+                    self.prev_bid = 0
+                    self.prev_msg = ""
                     self.state.lot_phase = "WAITING"
                     self.state.any_bids_this_lot = False
                     self.state.we_have_bid_this_lot = False
@@ -109,40 +115,55 @@ class DomMonitor:
                     self.ui.refresh_target_list()
 
                 # ── Price movement classification ───────────────────────
+                #
+                # A price INCREASE is ambiguous: it might be a real bid,
+                # or the auctioneer adjusting the ask during the descent.
+                # A price DECREASE is unambiguous: no live bid gets
+                # reduced, so a drop PROVES nobody is holding a bid —
+                # any earlier "bid war" assumption was wrong.
                 if bid_amount != self.prev_bid and bid_amount > 0:
+                    label = lot.bid_label or "?"
                     arrow = ("↑" if bid_amount > self.prev_bid > 0
                              else "↓" if 0 < bid_amount < self.prev_bid
                              else "=")
                     self.ui.log_debug_screen(
                         "bid",
                         f"BID   £{self.prev_bid:,} → £{bid_amount:,} {arrow}  "
+                        f"label='{label}'  "
                         f"(lot #{lot_no}, phase={self.state.lot_phase})")
                     direction = None
                     if self.prev_bid > 0 and bid_amount > self.prev_bid:
-                        # Price UP = someone placed a real bid
                         direction = "up"
                         self.state.any_bids_this_lot = True
                         self.ui.log_decision(
-                            f"[DOM] REAL BID: £{self.prev_bid:,} → £{bid_amount:,} "
-                            f"(winning={lot.we_are_winning})")
+                            f"[DOM] PRICE UP: £{self.prev_bid:,} → "
+                            f"£{bid_amount:,} label='{label}' "
+                            f"(winning={lot.we_are_winning})", "debug")
                         if self.state.lot_phase in ("WAITING", "SNIPE"):
                             self.state.lot_phase = "BID_WAR"
                             self.ui.log_decision(
-                                "[DEBUG] phase=BID_WAR — real bids exist, "
-                                "waiting game over", "debug")
+                                "[DEBUG] phase=BID_WAR (tentative) — price "
+                                "rose; a later drop would disprove this",
+                                "debug")
                         if not lot.we_are_winning:
                             self.state.competitor_bid_active = True
-                            self.ui.log_decision(
-                                f"[DEBUG] competitor bid on #{lot_no} — "
-                                f"decision loop will evaluate counter-bid",
-                                "debug")
                     elif self.prev_bid > 0 and bid_amount < self.prev_bid:
-                        # Price DOWN = auctioneer reducing the ask, no bids
                         direction = "down"
                         self.ui.log_decision(
-                            f"[DOM] ASK REDUCED: £{self.prev_bid:,} → £{bid_amount:,} "
-                            f"(auctioneer dropping, phase={self.state.lot_phase})",
+                            f"[DOM] ASK REDUCED: £{self.prev_bid:,} → "
+                            f"£{bid_amount:,} — proves no live bid held",
                             "debug")
+                        # Descent continues -> earlier rises were NOT bids.
+                        # Fall back to WAITING (unless we ourselves bid).
+                        if not self.state.we_have_bid_this_lot:
+                            if self.state.lot_phase != "WAITING":
+                                self.ui.log_decision(
+                                    f"[DEBUG] phase={self.state.lot_phase} "
+                                    f"→ WAITING — price dropped, descent "
+                                    f"still running, no real bids", "debug")
+                            self.state.lot_phase = "WAITING"
+                            self.state.any_bids_this_lot = False
+                            self.state.competitor_bid_active = False
                     self.ui.update_price(bid_amount, direction)
                     self.prev_bid = bid_amount
 
@@ -153,11 +174,20 @@ class DomMonitor:
                     self.prev_msg = msg
                     self.ui.log_decision(f"[DOM] auctioneer msg: {msg}", "debug")
 
+                    lower_msg = msg.lower()
+
+                    # Re-opened = the closing that was announced is off
+                    if "re-opened" in lower_msg or "reopened" in lower_msg:
+                        if self.state.closing_signal_active:
+                            self.state.closing_signal_active = False
+                            self.ui.log_decision(
+                                "[DEBUG] bidding re-opened — closing signal "
+                                "cleared", "debug")
+
                     # Instant closing trigger when the site shows it.
                     # (Bonus signal only — audio AI is the primary source
                     # because this message frequently never appears.)
-                    lower_msg = msg.lower()
-                    if any(k in lower_msg for k in DOM_CLOSING_PATTERNS):
+                    elif any(k in lower_msg for k in DOM_CLOSING_PATTERNS):
                         sig_type = ("SALE_CLOSING"
                                     if self.state.any_bids_this_lot
                                     else "PASS_IMMINENT")
@@ -178,6 +208,7 @@ class DomMonitor:
                     self._debug_tick = 0
                     self.ui.log_decision(
                         f"[DOM] lot=#{lot_no} ask=£{bid_amount:,} "
+                        f"label='{lot.bid_label}' "
                         f"phase={self.state.lot_phase} "
                         f"bids_exist={self.state.any_bids_this_lot} "
                         f"btn={'Y' if lot.bid_button_visible else 'N'} "

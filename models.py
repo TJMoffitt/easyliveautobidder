@@ -37,6 +37,7 @@ class LotState:
     description: str = ""
     estimate: str = ""
     current_bid: int = 0
+    bid_label: str = ""  # h4 above the price, e.g. "CURRENT ROOM BID"
     auctioneer_message: str = ""
     bid_button_visible: bool = False
     bidding_ended: bool = False
