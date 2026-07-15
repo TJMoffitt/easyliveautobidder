@@ -47,8 +47,16 @@ class LotState:
 @dataclass
 class BotState:
     lot: LotState = field(default_factory=LotState)
+    # Per-lot state machine: WAITING -> SNIPE / BID_WAR -> OUT
+    #   WAITING  = price descending, nobody has bid, we do nothing
+    #   SNIPE    = auctioneer about to pass unsold -> we place first bid
+    #   BID_WAR  = real bids exist (ours or theirs) -> counter up to max
+    #   OUT      = price exceeded our max, we let it go
+    lot_phase: str = "WAITING"
+    any_bids_this_lot: bool = False
+    we_have_bid_this_lot: bool = False
     closing_signal_active: bool = False
-    closing_signal_type: str = ""
+    closing_signal_type: str = ""  # PASS_IMMINENT or SALE_CLOSING
     closing_signal_time: float = 0
     competitor_bid_active: bool = False
     last_bid_placed_at: float = 0

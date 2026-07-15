@@ -1,4 +1,14 @@
-"""Audio capture, Whisper transcription, and GPT-4o closing signal analysis."""
+"""Audio capture, Whisper transcription, and GPT-4o auctioneer intent analysis.
+
+The AI classifies each transcript window into:
+  PASS_IMMINENT — no bids, auctioneer about to give up and pass the lot
+                  unsold ("lowest I'll go", "last chance or I move on").
+                  THIS is the snipe trigger: bid now at the floor price.
+  SALE_CLOSING  — bids exist, auctioneer closing the sale to the current
+                  bidder (going once/twice, fair warning, hammer up).
+  SOLD          — the hammer fell.
+  NORMAL        — everything else.
+"""
 
 import asyncio
 import json
@@ -42,6 +52,38 @@ AUDIO_INJECT_JS = """
 }
 """
 
+CLASSIFY_SYSTEM_PROMPT = """You analyse live auction house transcripts to time bids for a sniper strategy.
+
+The strategy: when nobody bids, the auctioneer keeps LOWERING the asking price. \
+Eventually he gives a signal that he is about to give up and pass the lot UNSOLD. \
+That signal is the moment to bid — the lot is at its minimum possible price.
+
+You get the recent transcript and the current DOM state (asking price, whether any \
+real bids have been placed yet).
+
+Reply with EXACTLY one JSON object, no other text:
+{"status": "...", "urgency": "...", "reason": "..."}
+
+status must be one of:
+  "PASS_IMMINENT" — NO bids yet and the auctioneer signals he's done dropping and \
+will pass/withdraw the lot or move on without a sale. Examples: "80 pounds lowest \
+I'll go", "last chance at 50 or I'll pass it", "no interest? moving on", "anyone at \
+all... no? I'll withdraw it", "are we all done at 40, last time", "or it goes to \
+the next lot", "I can't sell it any cheaper". Also counts if he offers the absolute \
+floor: "come on, someone start me, 30 pounds anywhere".
+  "SALE_CLOSING" — bids EXIST and the auctioneer is about to hammer the sale to the \
+current bidder: "going once", "going twice", "fair warning", "hammer's up", \
+"selling at 120 to the room", "all done at 120?".
+  "SOLD" — the hammer fell: "sold", "knocked down", "sold to bidder 5", "yours sir".
+  "NORMAL" — anything else: describing the item, taking active bids, routine price \
+drops with no give-up signal, chatter.
+
+urgency: "HIGH" if it will happen within seconds, "MEDIUM" if within ~10s, "LOW" otherwise.
+reason: max 6 words quoting/paraphrasing the trigger phrase.
+
+If bids exist, prefer SALE_CLOSING over PASS_IMMINENT. If no bids exist, closing \
+language means PASS_IMMINENT."""
+
 
 def build_wav(pcm_samples):
     """Convert list of PCM16 samples to WAV bytes."""
@@ -55,7 +97,7 @@ def build_wav(pcm_samples):
 
 
 class AudioEngine:
-    """Handles audio capture, transcription, and AI-based closing signal detection."""
+    """Handles audio capture, transcription, and AI intent detection."""
 
     def __init__(self, openai_client, config, state, ui):
         self.client = openai_client
@@ -83,29 +125,23 @@ class AudioEngine:
             pass
 
     def analyze_transcript(self, text):
-        """Use GPT-4o to classify auctioneer speech."""
+        """Send transcript + DOM context to GPT-4o for intent classification."""
+        dom_context = (
+            f"DOM state: lot #{self.state.lot.lot_number}, "
+            f"asking price £{self.state.lot.current_bid}, "
+            f"real bids placed this lot: "
+            f"{'YES' if self.state.any_bids_this_lot else 'NO'}, "
+            f"phase: {self.state.lot_phase}"
+        )
         try:
             resp = self.client.chat.completions.create(
                 model=self.config.get("openai_model", "gpt-4o"),
                 max_tokens=60,
                 temperature=0,
                 messages=[
-                    {"role": "system", "content": (
-                        "You analyse live auction transcripts. Classify the auctioneer's intent. "
-                        "Reply with EXACTLY one JSON object, no other text.\n"
-                        "Fields:\n"
-                        '  "status": one of "CLOSING", "SOLD", "NORMAL"\n'
-                        '  "urgency": one of "HIGH", "MEDIUM", "LOW"\n'
-                        '  "reason": very short phrase (max 5 words)\n\n'
-                        "CLOSING = auctioneer is warning the lot is about to sell "
-                        "(going once, going twice, last call, fair warning, any more bids, "
-                        "lowest I'll go, about to sell, shall I sell, final chance, "
-                        "all done, selling now, any takers, last time, etc.)\n"
-                        "SOLD = the lot has been sold (sold, hammer down, knocked down, "
-                        "congratulations, sold to, etc.)\n"
-                        "NORMAL = anything else (describing items, taking bids, price drops, chatter)"
-                    )},
-                    {"role": "user", "content": text}
+                    {"role": "system", "content": CLASSIFY_SYSTEM_PROMPT},
+                    {"role": "user",
+                     "content": f"{dom_context}\n\nTranscript:\n{text}"}
                 ]
             )
             raw = resp.choices[0].message.content.strip()
@@ -117,7 +153,7 @@ class AudioEngine:
             return {"status": "NORMAL", "urgency": "LOW", "reason": "error"}
 
     async def run_loop(self, running_check):
-        """Main audio loop — captures, transcribes, analyses for closing signals."""
+        """Main audio loop — capture, transcribe, classify EVERY lot."""
         while running_check():
             await asyncio.sleep(3)
             try:
@@ -147,7 +183,9 @@ class AudioEngine:
                     model="whisper-1",
                     file=("audio.wav", wav, "audio/wav"),
                     language="en",
-                    prompt="auction bidding going once going twice sold hammer lot number fair warning"
+                    prompt=("auction bidding going once going twice sold hammer "
+                            "lot number fair warning last chance pass it withdraw "
+                            "lowest moving on")
                 )
                 latency = int((time.time() - t0) * 1000)
                 self.ui.update_latency(latency)
@@ -162,13 +200,7 @@ class AudioEngine:
                 if len(self.transcript_buffer) > 5:
                     self.transcript_buffer = self.transcript_buffer[-5:]
 
-                current_lot = self.state.lot.lot_number or ""
-                on_target = not self.target_lots or any(
-                    t in current_lot for t in self.target_lots)
-
-                if not on_target:
-                    continue
-
+                # Run AI classification on EVERY lot (debug mode)
                 context = " | ".join(self.transcript_buffer[-3:])
                 analysis = await asyncio.get_event_loop().run_in_executor(
                     None, self.analyze_transcript, context
@@ -178,13 +210,37 @@ class AudioEngine:
                 urgency = analysis.get("urgency", "LOW")
                 reason = analysis.get("reason", "")
 
-                if status == "CLOSING":
+                # Debug: log every AI verdict so we can see what it thinks
+                self.ui.log_decision(
+                    f"[AI] status={status} urgency={urgency} "
+                    f"reason='{reason}' "
+                    f"(bids={'Y' if self.state.any_bids_this_lot else 'N'} "
+                    f"phase={self.state.lot_phase})",
+                    "debug")
+
+                if status == "PASS_IMMINENT":
                     self.state.closing_signal_active = True
-                    self.state.closing_signal_type = reason.upper()
-                    self.state.closing_signal_time = asyncio.get_event_loop().time()
+                    self.state.closing_signal_type = "PASS_IMMINENT"
+                    self.state.closing_signal_time = \
+                        asyncio.get_event_loop().time()
+                    self.ui.log_decision(
+                        f">>> PASS IMMINENT: {reason} [{urgency}] — "
+                        f"lot about to go unsold, snipe window open <<<",
+                        "trigger")
+                    self.ui.set_status(f"PASS IMMINENT: {reason}", ACCENT_RED)
+                    self.ui.flash_alert("HIGH")
+
+                elif status == "SALE_CLOSING":
+                    self.state.closing_signal_active = True
+                    self.state.closing_signal_type = "SALE_CLOSING"
+                    self.state.closing_signal_time = \
+                        asyncio.get_event_loop().time()
                     color = ACCENT_RED if urgency == "HIGH" else ACCENT_AMBER
-                    self.ui.log_decision(f">>> CLOSING: {reason} [{urgency}] <<<", "trigger")
-                    self.ui.set_status(f"CLOSING: {reason}", color)
+                    self.ui.log_decision(
+                        f">>> SALE CLOSING: {reason} [{urgency}] — "
+                        f"hammer about to fall on current bidder <<<",
+                        "trigger")
+                    self.ui.set_status(f"SALE CLOSING: {reason}", color)
                     self.ui.flash_alert(urgency)
 
                 elif status == "SOLD":

@@ -346,6 +346,7 @@ class ControlRoom:
         self.decision_box.tag_configure("pass", foreground=TEXT_DIM)
         self.decision_box.tag_configure("sold", foreground=ACCENT_PURPLE)
         self.decision_box.tag_configure("error", foreground=ACCENT_RED)
+        self.decision_box.tag_configure("debug", foreground="#475569")
 
     def _build_right_panel(self, parent):
         right = tk.Frame(parent, bg=BG_DARK)
@@ -790,17 +791,26 @@ class ControlRoom:
     def record_sale(self):
         lot = self.state.lot
         if lot.lot_number and lot.current_bid > 0:
+            won = lot.we_are_winning and self.state.we_have_bid_this_lot
             sold = SoldItem(
                 lot_number=lot.lot_number,
                 description=lot.description,
                 estimate=lot.estimate,
                 sold_price=lot.current_bid,
                 timestamp=datetime.now().strftime("%H:%M:%S"),
+                won_by_us=won,
             )
             self.state.auction_history.append(sold)
-            self.log_decision(
-                f"SOLD: Lot {lot.lot_number}"
-                f" — £{lot.current_bid:,}", "sold")
+            if won:
+                self.state.items_won += 1
+                self.state.total_spent += lot.current_bid
+                self.log_decision(
+                    f"*** WE WON Lot {lot.lot_number}"
+                    f" at £{lot.current_bid:,} ***", "bid")
+            else:
+                self.log_decision(
+                    f"SOLD: Lot {lot.lot_number}"
+                    f" — £{lot.current_bid:,}", "sold")
             self.update_history_list()
             self.update_stats()
             self.update_chart()
@@ -809,6 +819,9 @@ class ControlRoom:
 
         self.state.closing_signal_active = False
         self.state.bids_placed_this_lot = 0
+        self.state.lot_phase = "WAITING"
+        self.state.any_bids_this_lot = False
+        self.state.we_have_bid_this_lot = False
         self.set_status("RUNNING", ACCENT_GREEN)
 
     # ── Controls ────────────────────────────────────────────────────────
