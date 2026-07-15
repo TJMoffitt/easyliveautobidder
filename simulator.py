@@ -201,7 +201,7 @@ BUILTIN_SCENARIOS = [
     },
     {
         "name": "5. SOLD LABEL + RE-OPEN — sale confirmed by DOM, then re-opened",
-        "target_lots": {},
+        "target_lots": {"1120": 500},
         "events": [
             {"dom": {"lotNo": "Lot 1120", "lotDesc": "BOX OF TOOLS",
                      "bidLabel": "CURRENT ROOM BID", "currentBid": "£8",

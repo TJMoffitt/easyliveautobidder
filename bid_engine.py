@@ -31,14 +31,13 @@ class BidEngine:
         self.page = page
 
     def get_lot_max(self):
-        """Max bid for the current lot: per-lot target if set, else global."""
+        """Max bid for the current lot IF it is targeted, else None.
+        No targets set = observe only, never bid on anything."""
         lot = self.state.lot
-        if self.target_lots:
-            for tgt, tgt_max in self.target_lots.items():
-                if tgt in (lot.lot_number or ""):
-                    return tgt_max
-            return None  # lot not targeted
-        return int(self.max_bid_var.get() or 500)
+        for tgt, tgt_max in self.target_lots.items():
+            if tgt in (lot.lot_number or ""):
+                return tgt_max
+        return None
 
     def evaluate(self, trigger="") -> dict:
         """Decide whether to bid right now. Returns {action, reason, amount?}."""
@@ -58,6 +57,9 @@ class BidEngine:
 
         max_bid = self.get_lot_max()
         if max_bid is None:
+            if not self.target_lots:
+                return {"action": "PASS",
+                        "reason": "No target lots set — observing only"}
             return {"action": "PASS",
                     "reason": f"Lot #{lot.lot_number} not in target list"}
 
