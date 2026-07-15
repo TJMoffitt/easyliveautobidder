@@ -37,9 +37,15 @@ class LotState:
     description: str = ""
     estimate: str = ""
     current_bid: int = 0
-    bid_label: str = ""  # h4 above the price, e.g. "CURRENT ROOM BID"
+    # h4 above the price — THE ground truth for bid state:
+    #   "ASKING BID"           = no live bid, auctioneer descending
+    #   "CURRENT ROOM BID"     = real bid held by someone in the room
+    #   "CURRENT INTERNET BID" = real bid held by an online bidder
+    #   "AWAITING BIDDING"     = between lots
+    bid_label: str = ""
     auctioneer_message: str = ""
     bid_button_visible: bool = False
+    bid_button_amount: int = 0  # exact £ a click on BID NOW commits to
     bidding_ended: bool = False
     we_are_winning: bool = False
     register_required: bool = False

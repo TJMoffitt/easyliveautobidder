@@ -63,10 +63,11 @@ class BidEngine:
         if lot.current_bid <= 0:
             return {"action": "WAIT", "reason": "No price visible yet"}
 
-        # SNIPE: first bid at the floor — clicking the button accepts the
-        # current asking price, no increment involved.
-        # BID_WAR: countering — the button accepts the next ask up.
-        if trigger == "SNIPE":
+        # The BID NOW button shows the EXACT amount a click commits to
+        # ("BID NOW £5") — use it; fall back to ask/increment estimates.
+        if lot.bid_button_amount > 0:
+            bid_amount = lot.bid_button_amount
+        elif trigger == "SNIPE":
             bid_amount = lot.current_bid
         else:
             increment = self.config["bid_strategy"].get("bid_increment", 10)
@@ -80,7 +81,7 @@ class BidEngine:
 
         if not lot.bid_button_visible:
             return {"action": "WAIT",
-                    "reason": "Bid button not visible on page"}
+                    "reason": "BID NOW button not visible on page"}
 
         now = asyncio.get_event_loop().time()
         since_last = now - self.state.last_bid_placed_at
@@ -111,14 +112,16 @@ class BidEngine:
                 "reaction_delay_ms", 500) / 1000
             await asyncio.sleep(delay)
             try:
+                # #bid-live-bid-btn is the real "BID NOW £X" button on the
+                # logged-in page; get-ready/soon are pre-bid placeholders
+                bid_btn = self.page.locator("#bid-live-bid-btn")
                 ready = self.page.locator("#bid-live-get-ready")
-                soon = self.page.locator("#bid-live-bidding-soon")
                 clicked = False
-                if await ready.is_visible():
-                    await ready.click()
+                if await bid_btn.is_visible():
+                    await bid_btn.click()
                     clicked = True
-                elif await soon.is_visible():
-                    await soon.click()
+                elif await ready.is_visible():
+                    await ready.click()
                     clicked = True
 
                 if clicked:

@@ -39,8 +39,9 @@ DOM_SCRAPE_JS = """
             }
             return '';
         })(),
-        bidButtonVisible: vis('#bid-live-get-ready') || vis('#bid-live-bidding-soon'),
-        bidButtonText: txt('#bid-live-get-ready') || txt('#bid-live-bidding-soon'),
+        bidButtonVisible: vis('#bid-live-bid-btn'),
+        bidButtonText: txt('#bid-live-bid-btn'),
+        getReadyVisible: vis('#bid-live-get-ready') || vis('#bid-live-bidding-soon'),
         biddingEnded: vis('#bid-live-bidding-ended'),
         registerVisible: vis('#bid-live-reg-btn'),
         winningBadge: txt('.bid-live-current-bid').includes('winning') ||
@@ -77,6 +78,11 @@ class DomMonitor:
                 match = re.search(r"[\£\$]?\s*([0-9,]+)", bid_text)
                 bid_amount = int(match.group(1).replace(",", "")) if match else 0
 
+                btn_text = data.get("bidButtonText", "")
+                btn_match = re.search(r"[\£\$]\s*([0-9,]+)", btn_text)
+                btn_amount = (int(btn_match.group(1).replace(",", ""))
+                              if btn_match else 0)
+
                 lot = self.state.lot
                 lot.lot_number = lot_no
                 lot.description = data.get("lotDesc", "")
@@ -85,6 +91,7 @@ class DomMonitor:
                 lot.bid_label = data.get("bidLabel", "")
                 lot.auctioneer_message = data.get("auctioneerMsg", "")
                 lot.bid_button_visible = data.get("bidButtonVisible", False)
+                lot.bid_button_amount = btn_amount
                 lot.bidding_ended = data.get("biddingEnded", False)
                 lot.we_are_winning = data.get("winningBadge", False)
                 lot.register_required = data.get("registerVisible", False)
@@ -114,58 +121,80 @@ class DomMonitor:
                         "debug")
                     self.ui.refresh_target_list()
 
-                # ── Price movement classification ───────────────────────
+                # ── Bid state from the label (ground truth) ─────────────
                 #
-                # A price INCREASE is ambiguous: it might be a real bid,
-                # or the auctioneer adjusting the ask during the descent.
-                # A price DECREASE is unambiguous: no live bid gets
-                # reduced, so a drop PROVES nobody is holding a bid —
-                # any earlier "bid war" assumption was wrong.
+                # "ASKING BID"            = no live bid, auctioneer descending
+                # "CURRENT ROOM/INTERNET BID" = a REAL bid is held at this price
+                # Price direction is NOT used to infer bids any more.
+                label = (lot.bid_label or "").upper()
+                has_live_bid = "CURRENT" in label and "BID" in label
+
                 if bid_amount != self.prev_bid and bid_amount > 0:
-                    label = lot.bid_label or "?"
                     arrow = ("↑" if bid_amount > self.prev_bid > 0
                              else "↓" if 0 < bid_amount < self.prev_bid
                              else "=")
                     self.ui.log_debug_screen(
                         "bid",
                         f"BID   £{self.prev_bid:,} → £{bid_amount:,} {arrow}  "
-                        f"label='{label}'  "
+                        f"label='{lot.bid_label}'  btn='{btn_text}'  "
                         f"(lot #{lot_no}, phase={self.state.lot_phase})")
+
                     direction = None
                     if self.prev_bid > 0 and bid_amount > self.prev_bid:
                         direction = "up"
+                    elif self.prev_bid > 0 and bid_amount < self.prev_bid:
+                        direction = "down"
+
+                    if has_live_bid:
+                        # Real bid at this price (room or internet)
+                        if not self.state.any_bids_this_lot:
+                            self.ui.log_decision(
+                                f"[DOM] FIRST REAL BID: £{bid_amount:,} "
+                                f"({lot.bid_label})", "debug")
                         self.state.any_bids_this_lot = True
-                        self.ui.log_decision(
-                            f"[DOM] PRICE UP: £{self.prev_bid:,} → "
-                            f"£{bid_amount:,} label='{label}' "
-                            f"(winning={lot.we_are_winning})", "debug")
                         if self.state.lot_phase in ("WAITING", "SNIPE"):
                             self.state.lot_phase = "BID_WAR"
                             self.ui.log_decision(
-                                "[DEBUG] phase=BID_WAR (tentative) — price "
-                                "rose; a later drop would disprove this",
-                                "debug")
+                                f"[DEBUG] phase=BID_WAR — live bid held "
+                                f"({lot.bid_label} £{bid_amount:,})", "debug")
                         if not lot.we_are_winning:
                             self.state.competitor_bid_active = True
-                    elif self.prev_bid > 0 and bid_amount < self.prev_bid:
-                        direction = "down"
+                    else:
+                        # ASKING BID: auctioneer adjusting the ask — not a bid
                         self.ui.log_decision(
-                            f"[DOM] ASK REDUCED: £{self.prev_bid:,} → "
-                            f"£{bid_amount:,} — proves no live bid held",
-                            "debug")
-                        # Descent continues -> earlier rises were NOT bids.
-                        # Fall back to WAITING (unless we ourselves bid).
+                            f"[DOM] ASK {'RAISED' if direction == 'up' else 'REDUCED'}: "
+                            f"£{self.prev_bid:,} → £{bid_amount:,} "
+                            f"(label='{lot.bid_label}', not a bid)", "debug")
                         if not self.state.we_have_bid_this_lot:
-                            if self.state.lot_phase != "WAITING":
+                            if self.state.lot_phase == "BID_WAR":
                                 self.ui.log_decision(
-                                    f"[DEBUG] phase={self.state.lot_phase} "
-                                    f"→ WAITING — price dropped, descent "
-                                    f"still running, no real bids", "debug")
-                            self.state.lot_phase = "WAITING"
+                                    "[DEBUG] phase=BID_WAR → WAITING — "
+                                    "label says ASKING, no live bid held",
+                                    "debug")
+                                self.state.lot_phase = "WAITING"
                             self.state.any_bids_this_lot = False
                             self.state.competitor_bid_active = False
+
                     self.ui.update_price(bid_amount, direction)
                     self.prev_bid = bid_amount
+
+                # Label can flip ASKING -> CURRENT at the SAME price
+                # (someone takes the ask exactly) — catch that too
+                elif has_live_bid and not self.state.any_bids_this_lot \
+                        and bid_amount > 0:
+                    self.state.any_bids_this_lot = True
+                    self.ui.log_decision(
+                        f"[DOM] REAL BID at ask: £{bid_amount:,} "
+                        f"({lot.bid_label})", "debug")
+                    self.ui.log_debug_screen(
+                        "bid",
+                        f"BID   ask taken at £{bid_amount:,}  "
+                        f"label='{lot.bid_label}'  "
+                        f"(lot #{lot_no}, phase={self.state.lot_phase})")
+                    if self.state.lot_phase in ("WAITING", "SNIPE"):
+                        self.state.lot_phase = "BID_WAR"
+                    if not lot.we_are_winning:
+                        self.state.competitor_bid_active = True
 
                 msg = data.get("auctioneerMsg", "")
                 if msg != self.prev_msg and msg:
