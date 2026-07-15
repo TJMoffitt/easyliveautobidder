@@ -8,6 +8,16 @@ Key job besides scraping: classify price movement.
 import asyncio
 import re
 
+from models import ACCENT_RED
+
+# Phrases the site puts in #auctioneer-message when a lot is closing.
+# NOT a single source of truth — the message often never appears; the
+# audio AI runs in parallel and catches what the DOM doesn't show.
+DOM_CLOSING_PATTERNS = (
+    "about to close", "fair warning", "final call",
+    "last chance", "going once", "going twice", "closing",
+)
+
 
 DOM_SCRAPE_JS = """
 () => {
@@ -142,6 +152,25 @@ class DomMonitor:
                         "msg", f"MSG   '{self.prev_msg}' → '{msg}'")
                     self.prev_msg = msg
                     self.ui.log_decision(f"[DOM] auctioneer msg: {msg}", "debug")
+
+                    # Instant closing trigger when the site shows it.
+                    # (Bonus signal only — audio AI is the primary source
+                    # because this message frequently never appears.)
+                    lower_msg = msg.lower()
+                    if any(k in lower_msg for k in DOM_CLOSING_PATTERNS):
+                        sig_type = ("SALE_CLOSING"
+                                    if self.state.any_bids_this_lot
+                                    else "PASS_IMMINENT")
+                        self.state.closing_signal_active = True
+                        self.state.closing_signal_type = sig_type
+                        self.state.closing_signal_time = \
+                            asyncio.get_event_loop().time()
+                        self.ui.log_decision(
+                            f">>> DOM CLOSING SIGNAL ({sig_type}): "
+                            f"'{msg}' <<<", "trigger")
+                        self.ui.set_status(f"CLOSING (DOM): {msg[:30]}",
+                                           ACCENT_RED)
+                        self.ui.flash_alert("HIGH")
 
                 # ── Periodic debug snapshot every ~10s ──────────────────
                 self._debug_tick += 1
