@@ -206,6 +206,13 @@ class AudioEngine:
 
                 self.ui.log_transcript(text)
 
+                # Rolling context must never span lots — lot 813's
+                # "no bid, move on" was firing PASS_IMMINENT on lot 814.
+                current_lot = self.state.lot.lot_number
+                if current_lot != getattr(self, "_buffer_lot", None):
+                    self._buffer_lot = current_lot
+                    self.transcript_buffer = []
+
                 self.transcript_buffer.append(text)
                 if len(self.transcript_buffer) > 5:
                     self.transcript_buffer = self.transcript_buffer[-5:]

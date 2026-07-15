@@ -164,6 +164,18 @@ class DomMonitor:
             self.ui.record_sale()
 
         if bid_amount != self.prev_bid and bid_amount > 0:
+            # A moving price invalidates any armed closing signal: if the
+            # lot were really about to pass/close, the price would be
+            # sitting still at the floor. (Lot 814 sniped the £80 OPENING
+            # ask because a stale signal stayed armed through the lot
+            # intro — this kills that class of bug.)
+            if self.state.closing_signal_active:
+                self.state.closing_signal_active = False
+                self.ui.log_decision(
+                    f"[DEBUG] price moved £{self.prev_bid:,} → "
+                    f"£{bid_amount:,} — closing signal invalidated "
+                    f"(a closing lot's price sits still)", "debug")
+
             arrow = ("↑" if bid_amount > self.prev_bid > 0
                      else "↓" if 0 < bid_amount < self.prev_bid
                      else "=")

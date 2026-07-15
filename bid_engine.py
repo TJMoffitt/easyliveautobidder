@@ -194,11 +194,13 @@ class BidEngine:
                         trigger = "SALE_CLOSING"
                     else:
                         # THE snipe moment: about to go unsold at the floor
-                        self.state.lot_phase = "SNIPE"
                         trigger = "SNIPE"
-                        self.ui.log_decision(
-                            "[DEBUG] phase=SNIPE — lot about to pass unsold, "
-                            "placing first bid at floor price", "debug")
+                        if self.state.lot_phase != "SNIPE":
+                            self.state.lot_phase = "SNIPE"
+                            self.ui.log_decision(
+                                "[DEBUG] phase=SNIPE — lot about to pass "
+                                "unsold, placing first bid at floor price",
+                                "debug")
 
                 elif sig == "SALE_CLOSING":
                     if self.state.we_have_bid_this_lot and \
@@ -221,9 +223,14 @@ class BidEngine:
 
             decision = self.evaluate(trigger)
 
-            self.ui.log_decision(
-                f"[DEBUG] trigger={trigger} -> {decision['action']}: "
-                f"{decision['reason']}", "debug")
+            # WAIT repeats every 0.2s tick while a signal is armed —
+            # only log a decision line when it differs from the last one
+            decision_key = (trigger, decision["action"], decision["reason"])
+            if decision_key != getattr(self, "_last_decision_key", None):
+                self._last_decision_key = decision_key
+                self.ui.log_decision(
+                    f"[DEBUG] trigger={trigger} -> {decision['action']}: "
+                    f"{decision['reason']}", "debug")
 
             if decision["action"] == "BID":
                 await self.place_bid(decision)
