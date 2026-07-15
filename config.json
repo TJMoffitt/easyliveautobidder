@@ -8,7 +8,7 @@
         "snipe_on_going_once": true,
         "snipe_on_going_twice": true,
         "bid_increment": 10,
-        "reaction_delay_ms": 500,
+        "reaction_delay_ms": 150,
         "floor_stall_seconds": 4,
         "floor_stall_min_drops": 2
     },
