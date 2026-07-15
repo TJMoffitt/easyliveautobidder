@@ -18,7 +18,16 @@ DOM_SCRAPE_JS = """
         lotDesc: txt('#bid-live-lot-desc, .bid-live-lot-desc'),
         lotEst: txt('#bid-live-lot-est, .bid-live-lot-est'),
         currentBid: txt('.bid-live-current-bid .current-bid, #bid-live-current-bid'),
-        auctioneerMsg: txt('#auctioneer-message'),
+        auctioneerMsg: (() => {
+            // duplicate ids possible (mobile/desktop layouts) and innerText
+            // returns '' for hidden elements — check all, fall back to textContent
+            const els = document.querySelectorAll('#auctioneer-message');
+            for (const e of els) {
+                const t = (e.innerText || '').trim() || (e.textContent || '').trim();
+                if (t) return t;
+            }
+            return '';
+        })(),
         bidButtonVisible: vis('#bid-live-get-ready') || vis('#bid-live-bidding-soon'),
         bidButtonText: txt('#bid-live-get-ready') || txt('#bid-live-bidding-soon'),
         biddingEnded: vis('#bid-live-bidding-ended'),
