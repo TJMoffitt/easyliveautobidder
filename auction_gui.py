@@ -782,16 +782,27 @@ class ControlRoom:
         self.root.after(0, do)
 
     def update_strategy_display(self, override_max=None):
+        """Informational ONLY — nothing here changes bid decisions.
+        The bid engine uses the per-lot max from TARGET LOTS directly;
+        this panel just shows market context and budget state."""
         history = self.state.auction_history
         max_bid = (override_max if override_max is not None
                    else int(self.max_bid_var.get() or 500))
         budget = int(self.budget_var.get() or 0)
 
-        effective_max = max_bid
         trend_text = "—"
-        mode_text = "NORMAL"
-        mode_color = TEXT
+        trend_color = TEXT
+        mode_text = "OBSERVE" if not self.target_lots else "TARGETED"
+        mode_color = TEXT if not self.target_lots else ACCENT_BLUE
         reasoning = []
+
+        if not self.target_lots:
+            reasoning.append(
+                "No target lots — will never bid on anything")
+        else:
+            reasoning.append(
+                f"Bidding ONLY on {len(self.target_lots)} targeted "
+                f"lot(s), each to its own max")
 
         if len(history) >= 3:
             recent = history[-5:]
@@ -809,27 +820,7 @@ class ControlRoom:
                 trend_color = PRICE_GREEN
             else:
                 trend_text = "FLAT"
-                trend_color = TEXT
-
-            if avg > max_bid * 0.9:
-                effective_max = int(max_bid * 0.8)
-                mode_text = "CONSERV"
-                mode_color = ACCENT_AMBER
-                reasoning.append(
-                    f"Avg £{avg:.0f} > 90% of max"
-                    f" — reduced to £{effective_max}")
-            elif avg < max_bid * 0.3:
-                effective_max = int(max_bid * 1.1)
-                mode_text = "AGGRESSIVE"
-                mode_color = ACCENT_GREEN
-                reasoning.append(
-                    f"Avg £{avg:.0f} < 30% of max"
-                    f" — raised to £{effective_max}")
-            else:
-                reasoning.append(f"Avg recent price: £{avg:.0f}")
-        else:
-            trend_color = TEXT
-            reasoning.append("Collecting price data...")
+            reasoning.append(f"Avg recent sold price: £{avg:.0f}")
 
         if budget > 0:
             remaining = budget - self.state.total_spent
@@ -845,13 +836,13 @@ class ControlRoom:
                 f" for £{self.state.total_spent:,}")
 
         def do():
-            self.eff_max_label.config(text=f"£{effective_max:,}")
+            self.eff_max_label.config(text=f"£{max_bid:,}")
             self.trend_label.config(text=trend_text, fg=trend_color)
             self.mode_label.config(text=mode_text, fg=mode_color)
             self.chain_label.config(text="\n".join(reasoning))
         self.root.after(0, do)
 
-        return effective_max
+        return max_bid
 
     def record_sale(self, lot=None):
         lot = lot or self.state.lot
