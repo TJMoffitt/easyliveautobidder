@@ -72,6 +72,10 @@ class DomMonitor:
                 if lot_no != self.prev_lot and lot_no:
                     self.ui.log_decision(
                         f"NEW LOT: #{lot_no} — {lot.description}", "trigger")
+                    self.ui.log_debug_screen(
+                        "lot",
+                        f"LOT   #{self.prev_lot or '--'} → #{lot_no}  "
+                        f"({lot.description[:60]})")
                     self.prev_lot = lot_no
                     self.state.lot_phase = "WAITING"
                     self.state.any_bids_this_lot = False
@@ -87,6 +91,13 @@ class DomMonitor:
 
                 # ── Price movement classification ───────────────────────
                 if bid_amount != self.prev_bid and bid_amount > 0:
+                    arrow = ("↑" if bid_amount > self.prev_bid > 0
+                             else "↓" if 0 < bid_amount < self.prev_bid
+                             else "=")
+                    self.ui.log_debug_screen(
+                        "bid",
+                        f"BID   £{self.prev_bid:,} → £{bid_amount:,} {arrow}  "
+                        f"(lot #{lot_no}, phase={self.state.lot_phase})")
                     direction = None
                     if self.prev_bid > 0 and bid_amount > self.prev_bid:
                         # Price UP = someone placed a real bid
@@ -118,6 +129,8 @@ class DomMonitor:
 
                 msg = data.get("auctioneerMsg", "")
                 if msg != self.prev_msg and msg:
+                    self.ui.log_debug_screen(
+                        "msg", f"MSG   '{self.prev_msg}' → '{msg}'")
                     self.prev_msg = msg
                     self.ui.log_decision(f"[DOM] auctioneer msg: {msg}", "debug")
 

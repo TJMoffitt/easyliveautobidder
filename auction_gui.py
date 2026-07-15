@@ -62,8 +62,10 @@ class ControlRoom:
         self.audio_engine = None
         self.dom_monitor = None
         self.bid_engine = None
+        self.debug_window = None
 
         self._build_ui()
+        self._open_debug_window()
 
     # ── Config ──────────────────────────────────────────────────────────
 
@@ -148,6 +150,11 @@ class ControlRoom:
             selectcolor=BG_CARD, activebackground=BG_PANEL,
             activeforeground=ACCENT_RED, command=self._on_live_toggle)
         self.live_cb.pack(side=tk.RIGHT, padx=5)
+
+        tk.Button(right_ctrl, text="DEBUG", font=("Consolas", 9, "bold"),
+                  bg=BG_CARD, fg=ACCENT_PURPLE, relief="flat", cursor="hand2",
+                  command=self._toggle_debug_window, padx=8).pack(
+                      side=tk.RIGHT, padx=5)
 
         self.start_btn = tk.Button(
             right_ctrl, text="  START  ", font=("Consolas", 11, "bold"),
@@ -524,6 +531,64 @@ class ControlRoom:
             n = len(self.target_lots)
             self.target_count_label.config(
                 text=f"{n} lot{'s' if n != 1 else ''}")
+        self.root.after(0, do)
+
+    # ── Debug window ────────────────────────────────────────────────────
+
+    def _toggle_debug_window(self):
+        if getattr(self, "debug_window", None) and \
+                self.debug_window.winfo_exists():
+            self.debug_window.destroy()
+            self.debug_window = None
+            return
+        self._open_debug_window()
+
+    def _open_debug_window(self):
+        self.debug_window = tk.Toplevel(self.root)
+        self.debug_window.title("DEBUG — DOM change feed")
+        self.debug_window.geometry("720x480")
+        self.debug_window.configure(bg=BG_DARK)
+
+        header = tk.Frame(self.debug_window, bg=BG_PANEL, padx=10, pady=6)
+        header.pack(fill=tk.X)
+        tk.Label(header,
+                 text="Timestamped feed of every DOM change "
+                      "(lot / bid / screen message)",
+                 font=("Consolas", 9), fg=TEXT_DIM, bg=BG_PANEL,
+                 anchor="w").pack(side=tk.LEFT)
+
+        box_frame = tk.Frame(self.debug_window, bg=BG_DARK)
+        box_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        self.debug_box = tk.Text(
+            box_frame, bg=BG_CARD, fg=TEXT, font=("Consolas", 9),
+            wrap=tk.NONE, relief="flat", highlightthickness=0,
+            state=tk.DISABLED, padx=8, pady=6)
+        dbg_scroll = tk.Scrollbar(box_frame, command=self.debug_box.yview)
+        self.debug_box.configure(yscrollcommand=dbg_scroll.set)
+        dbg_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.debug_box.pack(fill=tk.BOTH, expand=True)
+
+        self.debug_box.tag_configure("lot", foreground=ACCENT_BLUE)
+        self.debug_box.tag_configure("bid", foreground=ACCENT_GREEN)
+        self.debug_box.tag_configure("msg", foreground=ACCENT_AMBER)
+
+    def log_debug_screen(self, kind, text):
+        """Append a timestamped line to the debug window (if open).
+        kind: 'lot' | 'bid' | 'msg' — colours the line."""
+        def do():
+            if not getattr(self, "debug_window", None) or \
+                    not self.debug_window.winfo_exists():
+                return
+            ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            self.debug_box.config(state=tk.NORMAL)
+            self.debug_box.insert(
+                tk.END, f"[{ts}] {text}\n", kind)
+            self.debug_box.see(tk.END)
+            lines = int(self.debug_box.index("end-1c").split(".")[0])
+            if lines > 500:
+                self.debug_box.delete("1.0", "100.0")
+            self.debug_box.config(state=tk.DISABLED)
         self.root.after(0, do)
 
     # ════════════════════════════════════════════════════════════════════
