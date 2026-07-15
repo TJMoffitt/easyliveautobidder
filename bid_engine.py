@@ -44,8 +44,12 @@ class BidEngine:
         """Decide whether to bid right now. Returns {action, reason, amount?}."""
         lot = self.state.lot
         budget = int(self.budget_var.get() or 0)
+        live = self.live_var.get()
 
-        if lot.register_required:
+        # Register/button checks only gate LIVE bidding — in observer
+        # mode (incl. logged-out) we still want the full decision flow
+        # so the user can see exactly what the bot WOULD do.
+        if live and lot.register_required:
             return {"action": "PASS", "reason": "Not registered on this auction"}
         if lot.bidding_ended:
             return {"action": "PASS", "reason": "Bidding ended"}
@@ -79,7 +83,7 @@ class BidEngine:
                     "reason": f"Bid £{bid_amount:,} would exceed "
                               f"max £{max_bid:,} — OUT"}
 
-        if not lot.bid_button_visible:
+        if live and not lot.bid_button_visible:
             return {"action": "WAIT",
                     "reason": "BID NOW button not visible on page"}
 
