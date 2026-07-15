@@ -179,13 +179,18 @@ class AudioEngine:
                 wav = build_wav(pcm)
 
                 t0 = time.time()
-                resp = self.client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=("audio.wav", wav, "audio/wav"),
-                    language="en",
-                    prompt=("auction bidding going once going twice sold hammer "
-                            "lot number fair warning last chance pass it withdraw "
-                            "lowest moving on")
+                # Run in executor — a blocking call here would freeze the
+                # DOM and decision loops for the whole API round-trip.
+                resp = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self.client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=("audio.wav", wav, "audio/wav"),
+                        language="en",
+                        prompt=("auction bidding going once going twice sold "
+                                "hammer lot number fair warning last chance "
+                                "pass it withdraw lowest moving on")
+                    )
                 )
                 latency = int((time.time() - t0) * 1000)
                 self.ui.update_latency(latency)
