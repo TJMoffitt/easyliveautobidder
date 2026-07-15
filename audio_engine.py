@@ -107,6 +107,52 @@ class AudioEngine:
         self.page = None
         self.transcript_buffer = []
         self.target_lots = {}
+        self._local_model = None
+        self._local_failed = False
+
+    def _init_local_whisper(self):
+        """Lazy-load faster-whisper for local (free, low-latency)
+        transcription. Falls back to the OpenAI API if unavailable."""
+        if self._local_model is not None or self._local_failed:
+            return
+        try:
+            from faster_whisper import WhisperModel
+            stt = self.config.get("speech_to_text", {})
+            model_name = stt.get("local_model", "small.en")
+            self.ui.log_decision(
+                f"Loading local Whisper '{model_name}' (first run "
+                f"downloads the model — may take a minute)...")
+            self._local_model = WhisperModel(
+                model_name, device="cpu", compute_type="int8")
+            self.ui.log_decision(
+                f"Local Whisper ready: {model_name} (CPU int8) — "
+                f"API transcription disabled", "bid")
+        except Exception as e:
+            self._local_failed = True
+            self.ui.log_decision(
+                f"Local Whisper unavailable ({e}) — using OpenAI API",
+                "debug")
+
+    def _transcribe(self, wav_bytes):
+        """Transcribe WAV bytes — locally when faster-whisper is
+        installed, otherwise via the OpenAI API. Runs in an executor."""
+        self._init_local_whisper()
+        prompt = ("auction bidding going once going twice sold hammer "
+                  "lot number fair warning last chance pass it withdraw "
+                  "lowest moving on")
+        if self._local_model is not None:
+            import io
+            segments, _info = self._local_model.transcribe(
+                io.BytesIO(wav_bytes), language="en",
+                beam_size=1, initial_prompt=prompt)
+            return " ".join(s.text.strip() for s in segments).strip()
+        resp = self.client.audio.transcriptions.create(
+            model="whisper-1",
+            file=("audio.wav", wav_bytes, "audio/wav"),
+            language="en",
+            prompt=prompt,
+        )
+        return resp.text.strip()
 
     def set_page(self, page):
         self.page = page
@@ -154,8 +200,10 @@ class AudioEngine:
 
     async def run_loop(self, running_check):
         """Main audio loop — capture, transcribe, classify EVERY lot."""
+        chunk_secs = self.config.get("speech_to_text", {}).get(
+            "chunk_duration_seconds", 3)
         while running_check():
-            await asyncio.sleep(3)
+            await asyncio.sleep(chunk_secs)
             try:
                 result = await self.page.evaluate("""
                 () => {
@@ -185,22 +233,12 @@ class AudioEngine:
 
                 t0 = time.time()
                 # Run in executor — a blocking call here would freeze the
-                # DOM and decision loops for the whole API round-trip.
-                resp = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self.client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=("audio.wav", wav, "audio/wav"),
-                        language="en",
-                        prompt=("auction bidding going once going twice sold "
-                                "hammer lot number fair warning last chance "
-                                "pass it withdraw lowest moving on")
-                    )
-                )
+                # DOM and decision loops for the whole transcription.
+                text = await asyncio.get_event_loop().run_in_executor(
+                    None, self._transcribe, wav)
                 latency = int((time.time() - t0) * 1000)
                 self.ui.update_latency(latency)
 
-                text = resp.text.strip()
                 if not text:
                     continue
 
