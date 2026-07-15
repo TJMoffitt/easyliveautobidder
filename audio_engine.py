@@ -236,34 +236,43 @@ class AudioEngine:
                             f"#{self.state.lot.lot_number}", "debug")
                     continue
 
-                if status == "PASS_IMMINENT":
-                    self.state.closing_signal_active = True
-                    self.state.closing_signal_type = "PASS_IMMINENT"
-                    self.state.closing_signal_time = \
-                        asyncio.get_event_loop().time()
-                    self.ui.log_decision(
-                        f">>> PASS IMMINENT: {reason} [{urgency}] — "
-                        f"lot about to go unsold, snipe window open <<<",
-                        "trigger")
-                    self.ui.set_status(f"PASS IMMINENT: {reason}", ACCENT_RED)
-                    self.ui.flash_alert("HIGH")
-
-                elif status == "SALE_CLOSING":
-                    self.state.closing_signal_active = True
-                    self.state.closing_signal_type = "SALE_CLOSING"
-                    self.state.closing_signal_time = \
-                        asyncio.get_event_loop().time()
-                    color = ACCENT_RED if urgency == "HIGH" else ACCENT_AMBER
-                    self.ui.log_decision(
-                        f">>> SALE CLOSING: {reason} [{urgency}] — "
-                        f"hammer about to fall on current bidder <<<",
-                        "trigger")
-                    self.ui.set_status(f"SALE CLOSING: {reason}", color)
-                    self.ui.flash_alert(urgency)
-
-                elif status == "SOLD":
-                    self.ui.log_decision(f"SOLD DETECTED: {reason}", "sold")
-                    self.ui.record_sale()
+                self.apply_analysis(analysis)
 
             except Exception as e:
                 self.ui.log_decision(f"Audio error: {e}", "error")
+
+    def apply_analysis(self, analysis):
+        """Turn an AI classification into bot signals. Called by run_loop
+        with live results, and by the simulator with scripted/AI results."""
+        status = analysis.get("status", "NORMAL")
+        urgency = analysis.get("urgency", "LOW")
+        reason = analysis.get("reason", "")
+
+        if status == "PASS_IMMINENT":
+            self.state.closing_signal_active = True
+            self.state.closing_signal_type = "PASS_IMMINENT"
+            self.state.closing_signal_time = \
+                asyncio.get_event_loop().time()
+            self.ui.log_decision(
+                f">>> PASS IMMINENT: {reason} [{urgency}] — "
+                f"lot about to go unsold, snipe window open <<<",
+                "trigger")
+            self.ui.set_status(f"PASS IMMINENT: {reason}", ACCENT_RED)
+            self.ui.flash_alert("HIGH")
+
+        elif status == "SALE_CLOSING":
+            self.state.closing_signal_active = True
+            self.state.closing_signal_type = "SALE_CLOSING"
+            self.state.closing_signal_time = \
+                asyncio.get_event_loop().time()
+            color = ACCENT_RED if urgency == "HIGH" else ACCENT_AMBER
+            self.ui.log_decision(
+                f">>> SALE CLOSING: {reason} [{urgency}] — "
+                f"hammer about to fall on current bidder <<<",
+                "trigger")
+            self.ui.set_status(f"SALE CLOSING: {reason}", color)
+            self.ui.flash_alert(urgency)
+
+        elif status == "SOLD":
+            self.ui.log_decision(f"SOLD DETECTED: {reason}", "sold")
+            self.ui.record_sale()
