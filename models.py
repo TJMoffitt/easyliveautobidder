@@ -62,6 +62,8 @@ class BotState:
     lot_phase: str = "WAITING"
     any_bids_this_lot: bool = False
     we_have_bid_this_lot: bool = False
+    ask_drops_this_lot: int = 0
+    last_ask_change_time: float = 0
     closing_signal_active: bool = False
     closing_signal_type: str = ""  # PASS_IMMINENT or SALE_CLOSING
     closing_signal_time: float = 0

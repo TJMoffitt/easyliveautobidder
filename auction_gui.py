@@ -939,7 +939,8 @@ class ControlRoom:
         # Create engines
         self.audio_engine = AudioEngine(
             self.openai_client, self.config, self.state, ui=self)
-        self.dom_monitor = DomMonitor(self.state, ui=self)
+        self.dom_monitor = DomMonitor(self.state, ui=self,
+                                      config=self.config)
         self.bid_engine = BidEngine(self.config, self.state, ui=self)
         self.bid_engine.live_var = self.live_var
         self.bid_engine.max_bid_var = self.max_bid_var

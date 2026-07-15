@@ -56,9 +56,10 @@ DOM_SCRAPE_JS = """
 class DomMonitor:
     """Watches the auction page DOM for state changes."""
 
-    def __init__(self, state, ui):
+    def __init__(self, state, ui, config=None):
         self.state = state
         self.ui = ui
+        self.config = config or {}
         self.page = None
         self.target_lots = {}
         self.prev_lot = ""
@@ -140,6 +141,8 @@ class DomMonitor:
             self.state.closing_signal_active = False
             self.state.competitor_bid_active = False
             self.state.bids_placed_this_lot = 0
+            self.state.ask_drops_this_lot = 0
+            self.state.last_ask_change_time = asyncio.get_event_loop().time()
             self.ui.log_decision(
                 f"[DEBUG] phase=WAITING — watching price descend, "
                 f"will not bid until pass-imminent signal or a real bid",
@@ -207,10 +210,13 @@ class DomMonitor:
                     self.state.competitor_bid_active = True
             else:
                 # ASKING BID: auctioneer adjusting the ask — not a bid
+                if direction == "down":
+                    self.state.ask_drops_this_lot += 1
                 self.ui.log_decision(
                     f"[DOM] ASK {'RAISED' if direction == 'up' else 'REDUCED'}: "
                     f"£{self.prev_bid:,} → £{bid_amount:,} "
-                    f"(label='{lot.bid_label}', not a bid)", "debug")
+                    f"(label='{lot.bid_label}', not a bid, "
+                    f"drops={self.state.ask_drops_this_lot})", "debug")
                 if not self.state.we_have_bid_this_lot:
                     if self.state.lot_phase == "BID_WAR":
                         self.ui.log_decision(
@@ -222,6 +228,7 @@ class DomMonitor:
 
             self.ui.update_price(bid_amount, direction)
             self.prev_bid = bid_amount
+            self.state.last_ask_change_time = asyncio.get_event_loop().time()
 
         # Label can flip ASKING -> CURRENT at the SAME price
         # (someone takes the ask exactly) — catch that too
@@ -281,6 +288,38 @@ class DomMonitor:
                     f"'{msg}' <<<", "trigger")
                 self.ui.set_status(f"CLOSING (DOM): {msg[:30]}",
                                    ACCENT_RED)
+                self.ui.flash_alert("HIGH")
+
+        # ── Floor-stall detector ────────────────────────────────────────
+        # Fast lots (~10-15s) pass before the audio path (~5-6s latency)
+        # can deliver the "no bid, move on" signal. The DOM tells us
+        # earlier: after a descent, the ask sitting STILL at the bottom
+        # with zero bids IS the pass-imminent moment.
+        strategy = self.config.get("bid_strategy", {})
+        stall_secs = strategy.get("floor_stall_seconds", 4)
+        min_drops = strategy.get("floor_stall_min_drops", 2)
+
+        if (self.state.lot_phase == "WAITING"
+                and not self.state.any_bids_this_lot
+                and not self.state.we_have_bid_this_lot
+                and not self.state.closing_signal_active
+                and not has_live_bid
+                and "ASKING" in label
+                and bid_amount > 0
+                and self.state.ask_drops_this_lot >= min_drops):
+            now = asyncio.get_event_loop().time()
+            stalled_for = now - self.state.last_ask_change_time
+            if stalled_for >= stall_secs:
+                self.state.closing_signal_active = True
+                self.state.closing_signal_type = "PASS_IMMINENT"
+                self.state.closing_signal_time = now
+                self.ui.log_decision(
+                    f">>> FLOOR STALL: ask £{bid_amount:,} unchanged for "
+                    f"{stalled_for:.1f}s after "
+                    f"{self.state.ask_drops_this_lot} drops, no bids — "
+                    f"pass imminent (DOM) <<<", "trigger")
+                self.ui.set_status(
+                    f"FLOOR STALL £{bid_amount:,}", ACCENT_RED)
                 self.ui.flash_alert("HIGH")
 
         # ── Periodic debug snapshot every ~10s ──────────────────────────
