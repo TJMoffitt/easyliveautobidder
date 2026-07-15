@@ -15,8 +15,7 @@
     "speech_to_text": {
         "model": "whisper-1",
         "language": "en",
-        "chunk_duration_seconds": 2,
-        "local_model": "small.en"
+        "chunk_duration_seconds": 3
     },
     "openai_model": "gpt-4o",
     "headless": false,
