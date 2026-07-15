@@ -65,6 +65,7 @@ class DomMonitor:
         self.prev_lot = ""
         self.prev_bid = 0
         self.prev_msg = ""
+        self.prev_btn = ""
         self._sale_recorded = False
         self._debug_tick = 0
 
@@ -247,6 +248,19 @@ class DomMonitor:
                 self.state.lot_phase = "BID_WAR"
             if not lot.we_are_winning:
                 self.state.competitor_bid_active = True
+
+        # ── BID NOW button (the "next bid" — logged-in pages only) ─────
+        # Shows exactly what a click would commit to right now.
+        btn_state = (f"BID NOW £{btn_amount:,}" if lot.bid_button_visible
+                     and btn_amount > 0
+                     else btn_text if lot.bid_button_visible
+                     else "(hidden)")
+        if btn_state != self.prev_btn:
+            self.ui.log_debug_screen(
+                "btn",
+                f"NEXT  {self.prev_btn or '--'} → {btn_state}  "
+                f"(lot #{lot_no}, ask=£{bid_amount:,})")
+            self.prev_btn = btn_state
 
         # ── Auctioneer message ──────────────────────────────────────────
         msg = data.get("auctioneerMsg", "")

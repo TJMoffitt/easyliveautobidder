@@ -572,6 +572,7 @@ class ControlRoom:
         self.debug_box.tag_configure("lot", foreground=ACCENT_BLUE)
         self.debug_box.tag_configure("bid", foreground=ACCENT_GREEN)
         self.debug_box.tag_configure("msg", foreground=ACCENT_AMBER)
+        self.debug_box.tag_configure("btn", foreground=ACCENT_PURPLE)
 
     def log_debug_screen(self, kind, text):
         """Append a timestamped line to the debug window (if open).
