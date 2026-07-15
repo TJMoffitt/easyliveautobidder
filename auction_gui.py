@@ -853,8 +853,8 @@ class ControlRoom:
 
         return effective_max
 
-    def record_sale(self):
-        lot = self.state.lot
+    def record_sale(self, lot=None):
+        lot = lot or self.state.lot
         if lot.lot_number and lot.current_bid > 0:
             won = lot.we_are_winning and self.state.we_have_bid_this_lot
             sold = SoldItem(
@@ -888,6 +888,21 @@ class ControlRoom:
         self.state.any_bids_this_lot = False
         self.state.we_have_bid_this_lot = False
         self.set_status("RUNNING", ACCENT_GREEN)
+
+    def undo_sale(self):
+        """Bidding re-opened after a SOLD — remove the last history entry."""
+        if not self.state.auction_history:
+            return
+        item = self.state.auction_history.pop()
+        if item.won_by_us:
+            self.state.items_won -= 1
+            self.state.total_spent -= item.sold_price
+        self.log_decision(
+            f"SALE UNDONE: Lot {item.lot_number} £{item.sold_price:,} "
+            f"(bidding re-opened)", "sold")
+        self.update_history_list()
+        self.update_stats()
+        self.update_chart()
 
     # ── Controls ────────────────────────────────────────────────────────
 

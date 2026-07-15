@@ -75,8 +75,8 @@ class ConsoleUI:
     def flash_alert(self, urgency):
         print(f"[{self._ts()}]   *** ALERT [{urgency}] ***")
 
-    def record_sale(self):
-        lot = self.state.lot
+    def record_sale(self, lot=None):
+        lot = lot or self.state.lot
         won = lot.we_are_winning and self.state.we_have_bid_this_lot
         if lot.lot_number and lot.current_bid > 0:
             if won:
@@ -90,6 +90,9 @@ class ConsoleUI:
         self.state.lot_phase = "WAITING"
         self.state.any_bids_this_lot = False
         self.state.we_have_bid_this_lot = False
+
+    def undo_sale(self):
+        print(f"[{self._ts()}] ◆ SALE UNDONE (bidding re-opened)")
 
     def update_strategy_display(self, override_max=None):
         # No decision-chaining history in the simulator — effective max
@@ -194,6 +197,24 @@ BUILTIN_SCENARIOS = [
                                   "urgency": "HIGH",
                                   "reason": "last chance, pass it"}},
             {"wait": 2, "note": "expect: PASS (not in target list)"},
+        ],
+    },
+    {
+        "name": "5. SOLD LABEL + RE-OPEN — sale confirmed by DOM, then re-opened",
+        "target_lots": {},
+        "events": [
+            {"dom": {"lotNo": "Lot 1120", "lotDesc": "BOX OF TOOLS",
+                     "bidLabel": "CURRENT ROOM BID", "currentBid": "£8",
+                     "bidButtonText": "BID NOW £10", "bidButtonVisible": True}},
+            {"dom": {"lotNo": "Lot 1120", "bidLabel": "SOLD TO THE INTERNET",
+                     "currentBid": "£10", "bidButtonVisible": False},
+             "note": "expect: SOLD recorded from label"},
+            {"dom": {"lotNo": "Lot 1120", "bidLabel": "CURRENT ROOM BID",
+                     "currentBid": "£12", "bidButtonText": "BID NOW £15",
+                     "bidButtonVisible": True,
+                     "auctioneerMsg": "Bidding has been re-opened!"},
+             "note": "expect: sale UNDONE, bidding live again"},
+            {"wait": 2},
         ],
     },
     {

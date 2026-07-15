@@ -8,6 +8,7 @@ Price direction is never used to infer bids.
 
 import asyncio
 import re
+from dataclasses import replace
 
 from models import ACCENT_RED
 
@@ -63,6 +64,7 @@ class DomMonitor:
         self.prev_lot = ""
         self.prev_bid = 0
         self.prev_msg = ""
+        self._sale_recorded = False
         self._debug_tick = 0
 
     def set_page(self, page):
@@ -92,6 +94,10 @@ class DomMonitor:
                       if btn_match else 0)
 
         lot = self.state.lot
+        # keep a copy of the outgoing lot so an unrecorded sale can be
+        # written to history when the lot changes under us
+        prev_lot_state = replace(lot)
+
         lot.lot_number = lot_no
         lot.description = data.get("lotDesc", "")
         lot.estimate = data.get("lotEst", "")
@@ -106,6 +112,17 @@ class DomMonitor:
 
         # ── New lot: reset the state machine ────────────────────────────
         if lot_no != self.prev_lot and lot_no:
+            # Record the outgoing lot as sold if it had a live bid and
+            # the SOLD label never appeared (implicit sale on lot change)
+            if (self.prev_lot and not self._sale_recorded
+                    and self.state.any_bids_this_lot
+                    and prev_lot_state.current_bid > 0):
+                self.ui.log_decision(
+                    f"[DOM] lot changed with live bid held — recording "
+                    f"#{prev_lot_state.lot_number} as sold at "
+                    f"£{prev_lot_state.current_bid:,}", "debug")
+                self.ui.record_sale(prev_lot_state)
+            self._sale_recorded = False
             self.ui.log_decision(
                 f"NEW LOT: #{lot_no} — {lot.description}", "trigger")
             self.ui.log_debug_screen(
@@ -130,8 +147,21 @@ class DomMonitor:
             self.ui.refresh_target_list()
 
         # ── Bid state from the label (ground truth) ─────────────────────
+        #   "ASKING BID"              = no live bid
+        #   "CURRENT ROOM/INTERNET BID" = real bid held
+        #   "SOLD TO THE ROOM/INTERNET" = hammer fell — sale confirmed
         label = (lot.bid_label or "").upper()
         has_live_bid = "CURRENT" in label and "BID" in label
+
+        if "SOLD" in label and not self._sale_recorded \
+                and lot.current_bid > 0:
+            self._sale_recorded = True
+            self.ui.log_decision(
+                f"[DOM] SOLD label: '{lot.bid_label}' at "
+                f"£{lot.current_bid:,} — sale confirmed", "sold")
+            self.ui.log_debug_screen(
+                "msg", f"SOLD  '{lot.bid_label}' at £{lot.current_bid:,}")
+            self.ui.record_sale()
 
         if bid_amount != self.prev_bid and bid_amount > 0:
             arrow = ("↑" if bid_amount > self.prev_bid > 0
@@ -209,13 +239,19 @@ class DomMonitor:
 
             lower_msg = msg.lower()
 
-            # Re-opened = the closing that was announced is off
+            # Re-opened = the closing (or even a recorded sale) is off
             if "re-opened" in lower_msg or "reopened" in lower_msg:
                 if self.state.closing_signal_active:
                     self.state.closing_signal_active = False
                     self.ui.log_decision(
                         "[DEBUG] bidding re-opened — closing signal "
                         "cleared", "debug")
+                if self._sale_recorded:
+                    self._sale_recorded = False
+                    self.ui.undo_sale()
+                    self.ui.log_decision(
+                        "[DEBUG] bidding re-opened after SOLD — sale "
+                        "un-recorded, lot is live again", "debug")
 
             # Instant closing trigger when the site shows it.
             # (Bonus signal only — audio AI is the primary source

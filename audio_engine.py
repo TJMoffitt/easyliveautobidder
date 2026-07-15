@@ -274,5 +274,10 @@ class AudioEngine:
             self.ui.flash_alert(urgency)
 
         elif status == "SOLD":
-            self.ui.log_decision(f"SOLD DETECTED: {reason}", "sold")
-            self.ui.record_sale()
+            # Log only — do NOT touch the state machine. Auctioneers say
+            # "sold" constantly and it was wiping live BID_WAR state
+            # mid-lot. Actual sales are recorded from the DOM: the
+            # "SOLD TO THE ..." label or the lot changing.
+            self.ui.log_decision(
+                f"SOLD heard (audio): {reason} — awaiting DOM confirmation",
+                "sold")
