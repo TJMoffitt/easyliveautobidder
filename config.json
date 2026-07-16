@@ -2,7 +2,7 @@
     "auction_url": "",
     "max_bid_gbp": 500,
     "target_lots": [],
-    "live_mode": false,
+    "live_mode": true,
     "bid_strategy": {
         "wait_for_drop": true,
         "snipe_on_going_once": true,
