@@ -900,20 +900,10 @@ class ControlRoom:
 
     def _on_live_toggle(self):
         if self.live_var.get():
-            if not self.config.get("live_mode", False):
-                messagebox.showinfo(
-                    "SAFETY LOCK",
-                    "live_mode is false in config.json — the bot CANNOT "
-                    "place bids.\n\nIt will run in observer mode and log "
-                    "WOULD CLICK BID instead.\n\nTo arm real bidding, set "
-                    "\"live_mode\": true in config.json AND tick LIVE.")
-                self.live_var.set(False)
-                return
             if not messagebox.askyesno(
                 "LIVE MODE",
-                "live_mode is enabled in config.json and you are arming "
-                "LIVE bidding.\n\nThis will place REAL BIDS with real "
-                "money.\n\nAre you sure?"):
+                "This will place REAL BIDS with real money.\n\n"
+                "Are you sure?"):
                 self.live_var.set(False)
 
     def _on_start(self):

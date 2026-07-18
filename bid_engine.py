@@ -106,14 +106,9 @@ class BidEngine:
 
         max_bid = self.get_lot_max() or int(self.max_bid_var.get() or 500)
 
-        # SAFETY LOCK: clicking a real bid button requires BOTH the LIVE
-        # checkbox AND "live_mode": true in config.json. With the config
-        # at false, the click path below is unreachable — guaranteed
-        # observer-only regardless of anything done in the GUI.
-        live_armed = (self.live_var.get()
-                      and self.config.get("live_mode", False) is True)
-
-        if not live_armed:
+        # LIVE checkbox (with its confirmation dialog) is the arming
+        # switch. Unticked = observer mode, logs WOULD CLICK BID only.
+        if not self.live_var.get():
             self.ui.log_decision(
                 f">>> WOULD CLICK BID £{decision['amount']:,} <<<  "
                 f"{reason}  lot=#{lot.lot_number}", "bid")
